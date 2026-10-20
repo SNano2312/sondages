@@ -33,6 +33,14 @@ main{flex:1;min-height:0;overflow:auto;padding:8px 14px}
 .choix.mien .lib::before{content:'\2713  ';color:var(--accent-f)}
 .barre{position:absolute;inset:0 auto 0 0;background:rgba(10,124,114,.18)}
 .lib,.nb{position:relative}
+.choix{border-left:10px solid var(--c,var(--trait))}
+.choix:disabled{background:#fff;color:var(--encre)}
+.choix.mien{border-color:var(--c,var(--accent))}
+.barre{background:var(--c,var(--accent));opacity:.28}
+.lib{display:flex;align-items:center}
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:1.9em;height:1.9em;border-radius:50%;background:var(--c);color:#fff;font-weight:700;margin-right:12px}
+.nb{font-weight:700}
+body.proj .nb{font-size:1.1em}
 #panneau{display:none;flex-direction:column;gap:8px;padding:8px 14px;background:#fff;border-top:1px solid var(--trait);max-height:45vh;overflow:auto}
 body.admin #panneau{display:flex}
 #panneau .ligne{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -53,7 +61,7 @@ body.proj .choix{font-size:1.5em}
 </head>
 <body>
 <header>
-  <h1>Sondage <small>v1</small></h1>
+  <h1>Sondage <small>v1.1</small></h1>
   <label>Prénom <input id="pseudo" size="12"></label>
   <label><input type="checkbox" id="isAnim"> Animateur</label>
   <button type="button" id="projBtn" class="sec">Projection</button>
@@ -90,6 +98,7 @@ const erreur = e => say('Écriture impossible : ' + ((e && e.message) || e));
 const act = async a => grist.docApi.applyUserActions(a(await grist.selectedTable.getTableId()));
 const raw = f => Object.fromEntries(Object.entries(f).filter(([k]) => map[k]).map(([k, v]) => [map[k], v]));
 const opt = (k, v) => grist.setOption(k, v);
+const PAL = ['#0a7c72', '#1f5fa8', '#b4492d', '#6b4e9b', '#8a6d00', '#2e7d32', '#a02060', '#4a5568'];   // une couleur par choix
 
 grist.ready({
   requiredAccess: 'full',
@@ -138,11 +147,13 @@ function render() {
     if (q.multi) z.append(el('p', 'aide', 'Plusieurs réponses possibles'));
     const mes = recs.filter(r => r.Question === q.id && r.Votant === me).map(r => r.Choix);
     const voir = visibles || anim, st = compte(q);
-    q.choix.forEach(c => {
+    q.choix.forEach((c, i) => {
       const n = st.par[c] || 0, pct = st.total ? Math.round(100 * n / st.total) : 0;
       const b = el('button', 'choix' + (mes.includes(c) ? ' mien' : ''));
       if (voir) { const bar = el('span', 'barre'); bar.style.width = pct + '%'; b.append(bar); }
-      b.append(el('span', 'lib', c));
+      b.style.setProperty('--c', PAL[i % PAL.length]);
+      const lib = el('span', 'lib'); lib.append(el('span', 'badge', String.fromCharCode(65 + i)), c);
+      b.append(lib);
       if (voir) b.append(el('span', 'nb', n + ' (' + pct + ' %)'));
       b.disabled = !ouvert; b.onclick = () => voter(q, c);
       z.append(b);
