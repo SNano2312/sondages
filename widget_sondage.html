@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sondage</title>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+:root{--fond:#eef2f0;--encre:#1d2b28;--doux:#5d706b;--accent:#0a7c72;--accent-f:#065a53;--trait:#d3dcd9}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.4 "Segoe UI",system-ui,sans-serif;color:var(--encre);background:var(--fond);height:100vh;height:100dvh;display:flex;flex-direction:column}
+header{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:10px 14px;background:#fff;border-bottom:1px solid var(--trait)}
+h1{font-size:16px;margin:0}
+h1 small{font-weight:400;color:var(--doux)}
+#etat{font-weight:600;color:var(--accent-f)}
+input,button,textarea{font:inherit}
+input,textarea{padding:6px 8px;border:1px solid var(--trait);border-radius:4px}
+button{cursor:pointer;border:0;border-radius:4px;padding:6px 12px;background:var(--accent);color:#fff}
+button:hover{background:var(--accent-f)}
+button:disabled{background:#9db5b1;cursor:default}
+button.sec{background:#fff;color:var(--accent-f);border:1px solid var(--accent)}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+#msg{min-height:24px;padding:2px 14px;color:#a02020}
+main{flex:1;min-height:0;overflow:auto;padding:8px 14px}
+#zone{max-width:760px;margin:0 auto}
+#zone h2{font-size:1.6em;margin:8px 0}
+.aide{color:var(--doux);margin:4px 0}
+.attente{color:var(--doux);text-align:center;margin-top:40px}
+.choix{position:relative;display:flex;justify-content:space-between;gap:12px;width:100%;text-align:left;padding:14px 16px;margin:8px 0;font-size:1.1em;background:#fff;color:var(--encre);border:2px solid var(--trait);border-radius:8px;overflow:hidden}
+.choix:hover:not(:disabled){background:#f3f6f5}
+.choix:disabled{cursor:default}
+.choix.mien{border-color:var(--accent)}
+.choix.mien .lib::before{content:'\2713  ';color:var(--accent-f)}
+.barre{position:absolute;inset:0 auto 0 0;background:rgba(10,124,114,.18)}
+.lib,.nb{position:relative}
+#panneau{display:none;flex-direction:column;gap:8px;padding:8px 14px;background:#fff;border-top:1px solid var(--trait);max-height:45vh;overflow:auto}
+body.admin #panneau{display:flex}
+#panneau .ligne{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#nqf{display:flex;flex-direction:column;gap:6px}
+#nqc{height:80px}
+.qrow{display:flex;gap:8px;align-items:center;padding:3px 6px;border:1px solid var(--trait);border-radius:4px}
+.qrow.actif{border-color:var(--accent);background:#e3f1ee}
+.qt{flex:1;overflow-wrap:anywhere}
+#sortie{height:120px;font:13px/1.4 Consolas,monospace}
+#sortie[hidden],#cop[hidden]{display:none}
+body.proj header>*:not(h1):not(#etat):not(#projBtn){display:none}
+body.proj #panneau{display:none!important}
+body.proj #zone{max-width:1000px}
+body.proj #zone h2{font-size:2.4em}
+body.proj .choix{font-size:1.5em}
+@media (max-width:700px){input,textarea{font-size:16px}#zone h2{font-size:1.3em}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Sondage <small>v1</small></h1>
+  <label>Prénom <input id="pseudo" size="12"></label>
+  <label><input type="checkbox" id="isAnim"> Animateur</label>
+  <button type="button" id="projBtn" class="sec">Projection</button>
+  <span id="etat"></span>
+</header>
+<div id="msg" role="status"></div>
+<main><div id="zone"></div></main>
+<section id="panneau">
+  <form id="nqf">
+    <input id="nqt" maxlength="200" placeholder="Nouvelle question" aria-label="Nouvelle question">
+    <textarea id="nqc" placeholder="Les choix, un par ligne (2 à 8)" aria-label="Choix"></textarea>
+    <div class="ligne"><label><input type="checkbox" id="nqm"> Plusieurs réponses possibles</label><button>Ajouter la question</button></div>
+  </form>
+  <div id="liste"></div>
+  <div class="ligne">
+    <button type="button" id="prec" class="sec">&#9664; Précédente</button>
+    <button type="button" id="suiv" class="sec">Suivante &#9654;</button>
+    <button type="button" id="tg"></button>
+    <button type="button" id="vis" class="sec"></button>
+    <button type="button" id="vider" class="sec"></button>
+    <button type="button" id="exp" class="sec">Exporter</button>
+    <button type="button" id="cop" class="sec" hidden>Copier</button>
+  </div>
+  <textarea id="sortie" readonly hidden aria-label="Résultats exportés"></textarea>
+</section>
+
+<script>
+let recs = [], map = {}, qs = [], actif = '', ouvert = false, visibles = false, sur = '';
+let me = localStorage.getItem('sd_me') || '', anim = localStorage.getItem('sd_anim') === '1';
+const $ = s => document.querySelector(s);
+const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
+const say = t => { $('#msg').textContent = t || ''; if (t) setTimeout(() => $('#msg').textContent = '', 5000); };
+const erreur = e => say('Écriture impossible : ' + ((e && e.message) || e));
+const act = async a => grist.docApi.applyUserActions(a(await grist.selectedTable.getTableId()));
+const raw = f => Object.fromEntries(Object.entries(f).filter(([k]) => map[k]).map(([k, v]) => [map[k], v]));
+const opt = (k, v) => grist.setOption(k, v);
+
+grist.ready({
+  requiredAccess: 'full',
+  columns: [
+    { name: 'Question', title: 'Question', type: 'Text' },
+    { name: 'Choix', title: 'Choix', type: 'Text' },
+    { name: 'Votant', title: 'Votant', type: 'Text' }
+  ]
+});
+grist.onRecords((rows, m) => { map = m || {}; recs = grist.mapColumnNames(rows) || []; render(); });
+grist.onOptions(o => {
+  o = o || {};
+  qs = Array.isArray(o.questions) ? o.questions : [];
+  actif = o.actif || ''; ouvert = !!o.ouvert; visibles = !!o.visibles;
+  render();
+});
+
+// Résultats d'une question : votes par choix et nombre de participants
+function compte(q) {
+  const par = {}, votants = new Set();
+  recs.forEach(r => { if (r.Question !== q.id) return; par[r.Choix] = (par[r.Choix] || 0) + 1; votants.add(r.Votant); });
+  return { par, total: votants.size };
+}
+
+function voter(q, c) {
+  if (!ouvert) return say('Le vote est clos.');
+  if (!me) { $('#pseudo').focus(); return say('Indique ton prénom avant de voter.'); }
+  const miens = recs.filter(r => r.Question === q.id && r.Votant === me);
+  const ajout = tb => ['AddRecord', tb, null, raw({ Question: q.id, Choix: c, Votant: me })];
+  if (q.multi) {   // un clic coche ou décoche le choix
+    const ex = miens.filter(r => r.Choix === c).map(r => r.id);
+    return act(tb => ex.length ? [['BulkRemoveRecord', tb, ex]] : [ajout(tb)]).catch(erreur);
+  }
+  if (miens.length === 1 && miens[0].Choix === c) return;   // déjà ce choix
+  const ex = miens.map(r => r.id);   // choix unique : le nouveau vote remplace l'ancien
+  act(tb => [...(ex.length ? [['BulkRemoveRecord', tb, ex]] : []), ajout(tb)]).catch(erreur);
+}
+
+function render() {
+  document.body.classList.toggle('admin', anim); $('#isAnim').checked = anim;
+  const q = qs.find(x => x.id === actif), z = $('#zone'); z.textContent = '';
+  $('#etat').textContent = q ? (ouvert ? 'Vote ouvert' : 'Vote clos') : '';
+  if (!q) z.append(el('p', 'attente', 'En attente de la prochaine question…'));
+  else {
+    z.append(el('h2', null, q.texte));
+    if (q.multi) z.append(el('p', 'aide', 'Plusieurs réponses possibles'));
+    const mes = recs.filter(r => r.Question === q.id && r.Votant === me).map(r => r.Choix);
+    const voir = visibles || anim, st = compte(q);
+    q.choix.forEach(c => {
+      const n = st.par[c] || 0, pct = st.total ? Math.round(100 * n / st.total) : 0;
+      const b = el('button', 'choix' + (mes.includes(c) ? ' mien' : ''));
+      if (voir) { const bar = el('span', 'barre'); bar.style.width = pct + '%'; b.append(bar); }
+      b.append(el('span', 'lib', c));
+      if (voir) b.append(el('span', 'nb', n + ' (' + pct + ' %)'));
+      b.disabled = !ouvert; b.onclick = () => voter(q, c);
+      z.append(b);
+    });
+    if (voir) z.append(el('p', 'aide', st.total + ' participant' + (st.total > 1 ? 's' : '') + (visibles ? '' : ' \u2013 résultats visibles par toi seul')));
+  }
+  panneau();
+}
+
+// Bouton à confirmation en deux clics (l'état survit aux rafraîchissements)
+function sure(b, cle, base, fn) {
+  b.textContent = sur === cle ? 'Confirmer ?' : base;
+  b.onclick = () => {
+    if (sur !== cle) { sur = cle; setTimeout(() => { if (sur === cle) { sur = ''; render(); } }, 4000); return render(); }
+    sur = ''; fn(); render();
+  };
+}
+const lancer = q => { opt('actif', q.id); opt('ouvert', true); opt('visibles', false); };
+const idsVotes = id => recs.filter(r => r.Question === id).map(r => r.id);
+
+function panneau() {
+  if (!anim) return;
+  $('#tg').textContent = ouvert ? 'Fermer le vote' : 'Ouvrir le vote';
+  $('#vis').textContent = visibles ? 'Masquer les résultats' : 'Afficher les résultats';
+  sure($('#vider'), 'vider', 'Vider les votes', () => { const ids = idsVotes(actif); if (ids.length) act(tb => [['BulkRemoveRecord', tb, ids]]).catch(erreur); });
+  const l = $('#liste'); l.textContent = '';
+  qs.forEach((q, i) => {
+    const row = el('div', 'qrow' + (q.id === actif ? ' actif' : ''));
+    const go = el('button', null, q.id === actif ? 'En cours' : 'Lancer'); go.disabled = q.id === actif; go.onclick = () => lancer(q);
+    const del = el('button', 'sec'); sure(del, 'del' + q.id, 'Supprimer', () => {
+      opt('questions', qs.filter(x => x.id !== q.id)); if (actif === q.id) opt('actif', '');
+      const ids = idsVotes(q.id); if (ids.length) act(tb => [['BulkRemoveRecord', tb, ids]]).catch(erreur);
+    });
+    row.append(el('span', 'qt', (i + 1) + '. ' + q.texte + (q.multi ? ' (multiple)' : '')), go, del);
+    l.append(row);
+  });
+}
+
+const aller = d => {   // question précédente ou suivante
+  const i = qs.findIndex(q => q.id === actif), n = qs[i < 0 && d > 0 ? 0 : i + d];
+  if (n) lancer(n);
+};
+$('#prec').onclick = () => aller(-1);
+$('#suiv').onclick = () => aller(1);
+$('#tg').onclick = () => opt('ouvert', !ouvert);
+$('#vis').onclick = () => opt('visibles', !visibles);
+
+$('#nqf').addEventListener('submit', e => {
+  e.preventDefault();
+  const t = $('#nqt').value.trim().slice(0, 200);
+  const ch = [...new Set($('#nqc').value.split('\n').map(s => s.trim().slice(0, 80)).filter(Boolean))].slice(0, 8);
+  if (!t || ch.length < 2) return say('Saisis une question et au moins deux choix (un par ligne).');
+  opt('questions', [...qs, { id: 'q' + Date.now().toString(36), texte: t, choix: ch, multi: $('#nqm').checked }]);
+  $('#nqt').value = ''; $('#nqc').value = ''; $('#nqm').checked = false;
+});
+
+$('#exp').onclick = () => {
+  const s = $('#sortie'), l = ['Question\tChoix\tVotes\t%'];
+  qs.forEach(q => { const st = compte(q); q.choix.forEach(c => { const n = st.par[c] || 0; l.push([q.texte, c, n, st.total ? Math.round(100 * n / st.total) : 0].join('\t')); }); });
+  s.value = l.join('\n'); s.hidden = !s.hidden; $('#cop').hidden = s.hidden;
+  if (!s.hidden) { s.focus(); s.select(); }
+};
+$('#cop').onclick = async () => {
+  const s = $('#sortie'), flash = t => { $('#cop').textContent = t; setTimeout(() => $('#cop').textContent = 'Copier', 2500); };
+  s.select();
+  try { await navigator.clipboard.writeText(s.value); flash('Copié \u2713'); }
+  catch (e) { flash(document.execCommand('copy') ? 'Copié \u2713' : 'Ctrl+C pour copier'); }
+};
+
+$('#pseudo').value = me;
+$('#pseudo').addEventListener('change', e => { me = e.target.value.replace(/,/g, ' ').trim(); localStorage.setItem('sd_me', me); render(); });
+$('#isAnim').addEventListener('change', e => { anim = e.target.checked; localStorage.setItem('sd_anim', anim ? '1' : '0'); render(); });
+const proj = on => { document.body.classList.toggle('proj', on); $('#projBtn').textContent = on ? 'Quitter la projection' : 'Projection'; };
+$('#projBtn').onclick = () => proj(!document.body.classList.contains('proj'));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') proj(false); });
+</script>
+</body>
+</html>
