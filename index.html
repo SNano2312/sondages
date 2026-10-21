@@ -90,7 +90,7 @@ body.proj .choix{font-size:1.5em}
 
 <script>
 let recs = [], map = {}, qs = [], actif = '', ouvert = false, visibles = false, sur = '';
-let me = localStorage.getItem('sd_me') || '', anim = localStorage.getItem('sd_anim') === '1';
+let me = localStorage.getItem('grist_prenom') || localStorage.getItem('sd_me') || '', anim = localStorage.getItem('sd_anim') === '1';
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
 const say = t => { $('#msg').textContent = t || ''; if (t) setTimeout(() => $('#msg').textContent = '', 5000); };
@@ -279,7 +279,7 @@ $('#cop').onclick = async () => {
 };
 
 $('#pseudo').value = me;
-$('#pseudo').addEventListener('change', e => { me = e.target.value.replace(/,/g, ' ').trim(); localStorage.setItem('sd_me', me); render(); });
+$('#pseudo').addEventListener('change', e => { me = e.target.value.replace(/,/g, ' ').trim(); localStorage.setItem('grist_prenom', me); localStorage.setItem('sd_me', me); render(); });
 $('#isAnim').addEventListener('change', e => { anim = e.target.checked; localStorage.setItem('sd_anim', anim ? '1' : '0'); render(); });
 const proj = on => { document.body.classList.toggle('proj', on); $('#projBtn').textContent = on ? 'Quitter la projection' : 'Projection'; };
 $('#projBtn').onclick = () => proj(!document.body.classList.contains('proj'));
