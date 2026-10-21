@@ -61,7 +61,7 @@ body.proj .choix{font-size:1.5em}
 </head>
 <body>
 <header>
-  <h1>Sondage <small>v1.1</small></h1>
+  <h1>Sondage <small>v1.2</small></h1>
   <label>Prénom <input id="pseudo" size="12"></label>
   <label><input type="checkbox" id="isAnim"> Animateur</label>
   <button type="button" id="projBtn" class="sec">Projection</button>
@@ -73,7 +73,7 @@ body.proj .choix{font-size:1.5em}
   <form id="nqf">
     <input id="nqt" maxlength="200" placeholder="Nouvelle question" aria-label="Nouvelle question">
     <textarea id="nqc" placeholder="Les choix, un par ligne (2 à 8)" aria-label="Choix"></textarea>
-    <div class="ligne"><label><input type="checkbox" id="nqm"> Plusieurs réponses possibles</label><button>Ajouter la question</button></div>
+    <div class="ligne"><label><input type="checkbox" id="nqm"> Plusieurs réponses possibles</label><button id="nqok">Ajouter la question</button><button type="button" id="nqno" class="sec" hidden>Annuler</button></div>
   </form>
   <div id="liste"></div>
   <div class="ligne">
@@ -97,7 +97,6 @@ const say = t => { $('#msg').textContent = t || ''; if (t) setTimeout(() => $('#
 const erreur = e => say('Écriture impossible : ' + ((e && e.message) || e));
 const act = async a => grist.docApi.applyUserActions(a(await grist.selectedTable.getTableId()));
 const raw = f => Object.fromEntries(Object.entries(f).filter(([k]) => map[k]).map(([k, v]) => [map[k], v]));
-const opt = (k, v) => grist.setOption(k, v);
 const PAL = ['#0a7c72', '#1f5fa8', '#b4492d', '#6b4e9b', '#8a6d00', '#2e7d32', '#a02060', '#4a5568'];   // une couleur par choix
 
 grist.ready({
@@ -109,12 +108,49 @@ grist.ready({
   ]
 });
 grist.onRecords((rows, m) => { map = m || {}; recs = grist.mapColumnNames(rows) || []; render(); });
-grist.onOptions(o => {
-  o = o || {};
+function appliquer(o) {
   qs = Array.isArray(o.questions) ? o.questions : [];
   actif = o.actif || ''; ouvert = !!o.ouvert; visibles = !!o.visibles;
-  render();
-});
+}
+grist.onOptions(o => { if (session) return; appliquer(o || {}); render(); });
+// ---- État partagé : table « Etat » si elle existe (protégeable par les règles d'accès), sinon options du widget ----
+const CLE = 'sondage';
+let session = false, rowId = null, lastSess = '', file = Promise.resolve(), attente = 0, courant = {};
+async function chargerEtat() {
+  if (attente > 0) return true;   // des écritures sont en cours : on attend
+  let t;
+  try { t = await grist.docApi.fetchTable('Etat'); } catch (e) { return false; }   // pas de table : mode options
+  session = true; rowId = null; let d = {};
+  (t.Widget || []).forEach((w, i) => {
+    if (w !== CLE) return;
+    rowId = t.id[i]; try { d = JSON.parse(t.Donnees[i] || '{}'); } catch (e) { d = {}; }
+  });
+  const sig = JSON.stringify(d);
+  if (sig === lastSess) return true;
+  lastSess = sig; courant = d; appliquer(d); render();
+  return true;
+}
+async function ecrireEtat(snap) {
+  await grist.docApi.applyUserActions([rowId
+    ? ['UpdateRecord', 'Etat', rowId, { Donnees: snap }]
+    : ['AddRecord', 'Etat', null, { Widget: CLE, Donnees: snap }]]);
+  const t = await grist.docApi.fetchTable('Etat');   // récupère l'identifiant de la ligne créée
+  (t.Widget || []).forEach((w, i) => { if (w === CLE) rowId = t.id[i]; });
+}
+// Les commandes d'animateur passent par opt() : écrites dans la table Etat (si elle existe) ou dans les options
+const opt = (k, v) => {
+  if (!session) return grist.setOption(k, v);
+  courant = { ...courant, [k]: v }; appliquer(courant); render();
+  const snap = JSON.stringify(courant); attente++;
+  file = file.then(() => ecrireEtat(snap)).catch(e => {
+    const m = String((e && e.message) || e);
+    say(/access|rule|denied|permission|blocked/i.test(m) ? 'Cette commande est réservée aux animateurs.' : 'Écriture impossible : ' + m);
+  }).then(() => { attente--; if (attente === 0) { lastSess = ''; return chargerEtat(); } });
+  return file;
+};
+chargerEtat();
+setInterval(() => { if (session) chargerEtat(); }, 2500);
+
 
 // Résultats d'une question : votes par choix et nombre de participants
 function compte(q) {
@@ -183,11 +219,12 @@ function panneau() {
   qs.forEach((q, i) => {
     const row = el('div', 'qrow' + (q.id === actif ? ' actif' : ''));
     const go = el('button', null, q.id === actif ? 'En cours' : 'Lancer'); go.disabled = q.id === actif; go.onclick = () => lancer(q);
+    const ed = el('button', 'sec', 'Modifier'); ed.onclick = () => chargerForm(q);
     const del = el('button', 'sec'); sure(del, 'del' + q.id, 'Supprimer', () => {
       opt('questions', qs.filter(x => x.id !== q.id)); if (actif === q.id) opt('actif', '');
       const ids = idsVotes(q.id); if (ids.length) act(tb => [['BulkRemoveRecord', tb, ids]]).catch(erreur);
     });
-    row.append(el('span', 'qt', (i + 1) + '. ' + q.texte + (q.multi ? ' (multiple)' : '')), go, del);
+    row.append(el('span', 'qt', (i + 1) + '. ' + q.texte + (q.multi ? ' (multiple)' : '')), go, ed, del);
     l.append(row);
   });
 }
@@ -201,13 +238,31 @@ $('#suiv').onclick = () => aller(1);
 $('#tg').onclick = () => opt('ouvert', !ouvert);
 $('#vis').onclick = () => opt('visibles', !visibles);
 
+let editId = '';   // identifiant de la question en cours de modification
+function resetForm() {
+  editId = ''; $('#nqt').value = ''; $('#nqc').value = ''; $('#nqm').checked = false;
+  $('#nqok').textContent = 'Ajouter la question'; $('#nqno').hidden = true;
+}
+function chargerForm(q) {   // remplit le formulaire avec la question à modifier
+  editId = q.id; $('#nqt').value = q.texte; $('#nqc').value = q.choix.join('\n'); $('#nqm').checked = !!q.multi;
+  $('#nqok').textContent = 'Enregistrer les modifications'; $('#nqno').hidden = false; $('#nqt').focus();
+}
+$('#nqno').onclick = resetForm;
 $('#nqf').addEventListener('submit', e => {
   e.preventDefault();
   const t = $('#nqt').value.trim().slice(0, 200);
   const ch = [...new Set($('#nqc').value.split('\n').map(s => s.trim().slice(0, 80)).filter(Boolean))].slice(0, 8);
   if (!t || ch.length < 2) return say('Saisis une question et au moins deux choix (un par ligne).');
-  opt('questions', [...qs, { id: 'q' + Date.now().toString(36), texte: t, choix: ch, multi: $('#nqm').checked }]);
-  $('#nqt').value = ''; $('#nqc').value = ''; $('#nqm').checked = false;
+  const multi = $('#nqm').checked;
+  if (editId) {   // modification d'une question existante
+    const ex = qs.find(x => x.id === editId);
+    if (ex && (JSON.stringify(ex.choix) !== JSON.stringify(ch) || !!ex.multi !== multi) && recs.some(r => r.Question === ex.id))
+      return say('Cette question a déjà des votes : tu peux modifier son texte, mais pas ses choix ni le mode de réponse (supprime-la et recrée-la, ou vide d\u2019abord les votes).');
+    opt('questions', qs.map(x => x.id === editId ? { ...x, texte: t, choix: ch, multi } : x));
+    return resetForm();
+  }
+  opt('questions', [...qs, { id: 'q' + Date.now().toString(36), texte: t, choix: ch, multi }]);
+  resetForm();
 });
 
 $('#exp').onclick = () => {
